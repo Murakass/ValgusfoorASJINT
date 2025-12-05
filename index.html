@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crossroad Control</title>
+  <style>
+    :root {
+      --bg: #0b0f12;
+      --panel: #151a1f;
+      --accent: #1e293b;
+      --accent2: #0ea5e9;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.3);
+    }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent2);
+      color: #001018;
+      transition: transform .05s ease-out, filter .1s;
+      white-space: nowrap;
+    }
+    button.secondary {
+      background: var(--accent);
+      color: var(--text);
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    button:hover {
+      filter: brightness(1.05);
+    }
+    .state-box {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #020617;
+      border: 1px solid rgba(148,163,184,.3);
+      font-size: 14px;
+    }
+    .state-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .state-value {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .pill {
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--muted);
+    }
+    .log {
+      margin-top: 14px;
+    }
+    .log-title {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .log-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 180px;
+      overflow-y: auto;
+      border-radius: 8px;
+      border: 1px solid rgba(31,41,55,.8);
+      background: #020617;
+      font-size: 13px;
+    }
+    .log-item {
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(15,23,42,.9);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .log-item:last-child {
+      border-bottom: 0;
+    }
+    .log-ts {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .small {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Crossroad Control</h1>
+    <p class="muted">Control the intersection modes and see the current state.</p>
+
+    <div class="card">
+      <div class="btn-row">
+        <button id="ped-btn">Request pedestrian crossing</button>
+        <button id="blink-btn" class="secondary">Blinking yellow: OFF</button>
+        <button id="normal-btn" class="secondary">Force normal traffic</button>
+      </div>
+
+      <div class="state-box">
+        <div class="state-label">Current mode</div>
+        <div class="state-value" id="mode-text">Unknown</div>
+        <div class="pill-row" id="extra-info"></div>
+      </div>
+
+      <div class="log">
+        <div class="log-title">Recent mode changes</div>
+        <ul class="log-list" id="log-list"></ul>
+      </div>
+
+      <div class="small" id="status-line">Connecting…</div>
+    </div>
+  </div>
+
+  <script>
+    // ====== CONFIG ======
+    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxVPuM5Gj_Wp09mGgVDjp4a6tp4oNwDtR-ESVpLSlCTMzz0eM5YTHz_hsqxJCYyI941/exec';
+    const SITE_ID = 'A';
+
+    const T_EW_GREEN   = 10000;
+    const T_EW_YELLOW  = 3000;
+    const T_ALL_RED_1  = 1000;
+    const T_NS_GREEN   = 10000;
+    const T_NS_YELLOW  = 3000;
+    const T_ALL_RED_2  = 1000;
+
+    const modeTextEl   = document.getElementById('mode-text');
+    const extraInfoEl  = document.getElementById('extra-info');
+    const logListEl    = document.getElementById('log-list');
+    const statusLineEl = document.getElementById('status-line');
+
+    const logEntries = [];
+    let lastMode = null;
+
+    // ====== Helpers ======
+    function jsonp(url) {
+      return new Promise((resolve, reject) => {
+        const cb = 'cb_' + Math.random().toString(36).slice(2);
+        const s = document.createElement('script');
+        window[cb] = data => { try { resolve(data); } finally { delete window[cb]; s.remove(); } };
+        s.onerror = reject;
+        s.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+        document.body.appendChild(s);
+      });
+    }
+
+    async function apiGet() {
+      return jsonp(SCRIPT_URL);
+    }
+
+    async function apiPost(params) {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k,v]) => qs.append(k, String(v)));
+      return jsonp(`${SCRIPT_URL}?${qs.toString()}`);
+    }
+
+    function phaseFromElapsed(elapsed, cycle) {
+      const t = elapsed % cycle;
+      if (t < T_EW_GREEN) return 'EW_GREEN';
+      if (t < T_EW_GREEN+T_EW_YELLOW) return 'EW_YELLOW';
+      if (t < T_EW_GREEN+T_EW_YELLOW+T_ALL_RED_1) return 'ALL_RED_1';
+      if (t < T_EW_GREEN+T_EW_YELLOW+T_ALL_RED_1+T_NS_GREEN) return 'NS_GREEN';
+      if (t < T_EW_GREEN+T_EW_YELLOW+T_ALL_RED_1+T_NS_GREEN+T_NS_YELLOW) return 'NS_YELLOW';
+      return 'ALL_RED_2';
+    }
+
+    function inferMode(state) {
+      const now = Date.now();
+      const pedActiveUntil = Date.parse(state.ped_active_until_iso || '') || 0;
+
+      if (state.blink_mode) return 'BLINKING_YELLOW';
+      if (now < pedActiveUntil) return 'PEDESTRIAN';
+      return 'NORMAL';
+    }
+
+    function renderMode(state) {
+      const mode = inferMode(state);
+      if (mode !== lastMode) {
+        const ts = new Date().toLocaleTimeString();
+        logEntries.unshift({ mode, ts });
+        if (logEntries.length > 20) logEntries.pop();
+        lastMode = mode;
+      }
+
+      // Text label
+      let label = 'Unknown';
+      if (mode === 'BLINKING_YELLOW') label = 'Blinking yellow';
+      else if (mode === 'PEDESTRIAN')  label = 'Pedestrian phase';
+      else if (mode === 'NORMAL')      label = 'Normal traffic cycle';
+
+      modeTextEl.textContent = label;
+
+      // Extra info pills
+      const pills = [];
+      pills.push(`<span class="pill">blink_mode: ${state.blink_mode ? 'ON' : 'OFF'}</span>`);
+      if (state.ped_request) {
+        pills.push('<span class="pill">ped_request: TRUE</span>');
+      }
+      if (state.ped_active_until_iso) {
+        pills.push(`<span class="pill">ped_active_until: ${state.ped_active_until_iso}</span>`);
+      }
+      pills.push(`<span class="pill">last_writer: ${state.last_writer || '-'}</span>`);
+      extraInfoEl.innerHTML = pills.join('');
+
+      // Log
+      logListEl.innerHTML = logEntries.map(entry => `
+        <li class="log-item">
+          <span>${entry.mode}</span>
+          <span class="log-ts">${entry.ts}</span>
+        </li>
+      `).join('');
+    }
+
+    async function mainLoop() {
+      try {
+        const state = await apiGet();
+
+        // Derive a live phase label too (optional)
+        const base = Date.parse(state.base_epoch_iso || '2025-01-01T00:00:00.000Z');
+        const cycle = Number(state.cycle_ms || 26000);
+        const offset = SITE_ID === 'A' ? Number(state.offset_A_ms||0) : Number(state.offset_B_ms||0);
+        const now = Date.now();
+        const elapsed = (now - base - offset + 10*cycle) % cycle;
+        const phaseName = phaseFromElapsed(elapsed, cycle);
+        statusLineEl.textContent = `Connected · Phase: ${phaseName}`;
+
+        renderMode(state);
+      } catch (e) {
+        console.warn(e);
+        statusLineEl.textContent = 'Error talking to backend (see console)';
+      }
+    }
+
+    // ====== Button actions ======
+    document.getElementById('ped-btn').addEventListener('click', async () => {
+      statusLineEl.textContent = 'Sending pedestrian request…';
+      await apiPost({ action:'setPedRequest', site: SITE_ID });
+    });
+
+    document.getElementById('blink-btn').addEventListener('click', async () => {
+      // Toggle from what we currently know
+      const currentOn = modeTextEl.textContent.toLowerCase().includes('blinking');
+      const nextMode = currentOn ? 'off' : 'on';
+      statusLineEl.textContent = `Setting blinking yellow: ${nextMode.toUpperCase()}…`;
+      await apiPost({ action:'setBlinkMode', mode: nextMode, site: SITE_ID });
+    });
+
+    document.getElementById('normal-btn').addEventListener('click', async () => {
+      // Force "normal": turn off blink_mode; backend should naturally handle ped timing.
+      statusLineEl.textContent = 'Forcing normal traffic…';
+      await apiPost({ action:'setBlinkMode', mode:'off', site: SITE_ID });
+      // Optional: if you add an action in Apps Script to clear ped_request, call it here too.
+      // await apiPost({ action:'clearPed', site: SITE_ID });
+    });
+
+    setInterval(mainLoop, 1000);
+    mainLoop();
+  </script>
+</body>
+</html>
